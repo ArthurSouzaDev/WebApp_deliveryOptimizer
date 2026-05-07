@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Algoritmo Genético · Otimização de Rotas</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════
+       CABEÇALHO
+  ═══════════════════════════════════════════════ -->
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-badge">AG</div>
+      <div>
+        <h1>Algoritmo Genético</h1>
+        <p class="header-sub">Otimização de Rotas de Entrega</p>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════
+       DESCRIÇÃO INTRODUTÓRIA
+  ═══════════════════════════════════════════════ -->
+  <section class="intro">
+    <p>
+      Este web app demonstra um <strong>algoritmo genético</strong> aplicado à otimização de rotas de entrega.
+      Cada rota possível é tratada como um <em>indivíduo</em> da população. O algoritmo avalia cada rota pela
+      distância total percorrida, seleciona as melhores soluções, combina partes dessas rotas por cruzamento e
+      aplica pequenas mutações para explorar novas possibilidades. Com o passar das gerações, a tendência é que
+      rotas mais eficientes sejam encontradas.
+    </p>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+       LAYOUT PRINCIPAL
+  ═══════════════════════════════════════════════ -->
+  <main class="layout">
+
+    <!-- ─── COLUNA ESQUERDA ─── -->
+    <aside class="col-left">
+
+      <!-- CONFIGURAÇÕES -->
+      <section class="card" id="card-config">
+        <h2 class="card-title">⚙ Configurações</h2>
+
+        <div class="form-group">
+          <label for="inputPontos">Pontos de entrega</label>
+          <input type="number" id="inputPontos" value="12" min="3" max="40" />
+          <span class="hint">mín: 3 · máx: 40</span>
+        </div>
+
+        <div class="form-group">
+          <label for="inputPopulacao">Tamanho da população</label>
+          <input type="number" id="inputPopulacao" value="80" min="10" max="500" />
+          <span class="hint">mín: 10 · máx: 500</span>
+        </div>
+
+        <div class="form-group">
+          <label for="inputGeracoes">Máximo de gerações</label>
+          <input type="number" id="inputGeracoes" value="300" min="10" max="5000" />
+        </div>
+
+        <div class="form-group">
+          <label for="inputMutacao">Taxa de mutação</label>
+          <input type="number" id="inputMutacao" value="0.02" min="0.001" max="0.5" step="0.001" />
+          <span class="hint">0.001 – 0.5</span>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn btn-secondary" id="btnGerar">🗺 Gerar Pontos</button>
+          <button class="btn btn-primary"   id="btnIniciar">▶ Iniciar</button>
+          <button class="btn btn-warning"   id="btnPausar"  disabled>⏸ Pausar</button>
+          <button class="btn btn-danger"    id="btnReiniciar">↺ Reiniciar</button>
+        </div>
+      </section>
+
+      <!-- ESTATÍSTICAS -->
+      <section class="card" id="card-stats">
+        <h2 class="card-title">📊 Estatísticas</h2>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <span class="stat-label">Geração atual</span>
+            <span class="stat-value" id="statGeracao">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Dist. inicial</span>
+            <span class="stat-value" id="statDistInicial">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Melhor distância</span>
+            <span class="stat-value highlight" id="statMelhorDist">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Melhoria</span>
+            <span class="stat-value green" id="statMelhoria">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Pontos</span>
+            <span class="stat-value" id="statPontos">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">População</span>
+            <span class="stat-value" id="statPopulacao">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Taxa mutação</span>
+            <span class="stat-value" id="statMutacao">—</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Status</span>
+            <span class="stat-value" id="statStatus">Aguardando</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- LOG -->
+      <section class="card" id="card-log">
+        <h2 class="card-title">📋 Log da Execução</h2>
+        <div id="logBox" class="log-box">
+          <p class="log-welcome">Configure e clique em <strong>Gerar Pontos</strong> para começar.</p>
+        </div>
+      </section>
+
+    </aside>
+
+    <!-- ─── COLUNA CENTRAL ─── -->
+    <section class="col-center">
+
+      <!-- CANVAS -->
+      <div class="card canvas-card">
+        <div class="canvas-header">
+          <h2 class="card-title">🗺 Visualização da Rota</h2>
+          <div class="legend">
+            <span class="leg-item"><span class="leg-dot depot"></span>Depósito</span>
+            <span class="leg-item"><span class="leg-dot delivery"></span>Entrega</span>
+            <span class="leg-item"><span class="leg-line best"></span>Melhor rota</span>
+            <span class="leg-item"><span class="leg-line initial"></span>Rota inicial</span>
+          </div>
+        </div>
+        <canvas id="canvas" width="600" height="480"></canvas>
+      </div>
+
+      <!-- HISTÓRICO -->
+      <div class="card">
+        <h2 class="card-title">📈 Histórico de Evolução</h2>
+        <canvas id="canvasGrafico" width="600" height="160"></canvas>
+      </div>
+
+    </section>
+
+    <!-- ─── COLUNA DIREITA ─── -->
+    <aside class="col-right">
+
+      <!-- EXPLICAÇÃO DIDÁTICA -->
+      <section class="card" id="card-explicacao">
+        <h2 class="card-title">📚 Como Funciona</h2>
+
+        <div class="etapa" id="etapa-populacao">
+          <div class="etapa-icone">🧬</div>
+          <div>
+            <strong>1. População Inicial</strong>
+            <p>Conjunto de rotas candidatas geradas aleatoriamente. Cada rota já é uma solução possível.</p>
+          </div>
+        </div>
+
+        <div class="etapa" id="etapa-fitness">
+          <div class="etapa-icone">📏</div>
+          <div>
+            <strong>2. Fitness (Aptidão)</strong>
+            <p>Medida de qualidade da rota. Calculado como <code>1 / distância_total</code>. Rotas menores têm fitness maior.</p>
+          </div>
+        </div>
+
+        <div class="etapa" id="etapa-selecao">
+          <div class="etapa-icone">🏆</div>
+          <div>
+            <strong>3. Seleção por Torneio</strong>
+            <p>Grupos de candidatos são sorteados e o melhor de cada grupo é escolhido para reprodução.</p>
+          </div>
+        </div>
+
+        <div class="etapa" id="etapa-cruzamento">
+          <div class="etapa-icone">🔀</div>
+          <div>
+            <strong>4. Cruzamento (Order Crossover)</strong>
+            <p>Duas rotas pai geram um filho: um segmento do pai 1 é mantido; os pontos restantes vêm na ordem do pai 2.</p>
+          </div>
+        </div>
+
+        <div class="etapa" id="etapa-mutacao">
+          <div class="etapa-icone">🎲</div>
+          <div>
+            <strong>5. Mutação</strong>
+            <p>Com baixa probabilidade, dois pontos de posição na rota são trocados, explorando novas possibilidades.</p>
+          </div>
+        </div>
+
+        <div class="etapa" id="etapa-elitismo">
+          <div class="etapa-icone">👑</div>
+          <div>
+            <strong>6. Elitismo</strong>
+            <p>A melhor rota da geração atual é preservada intacta para a próxima geração, garantindo que a qualidade nunca retroceda.</p>
+          </div>
+        </div>
+
+        <hr class="divider" />
+
+        <h3 class="glossario-titulo">🔤 Glossário</h3>
+        <dl class="glossario">
+          <dt>População</dt><dd>Conjunto de rotas candidatas.</dd>
+          <dt>Indivíduo</dt><dd>Uma rota possível.</dd>
+          <dt>Gene</dt><dd>Um ponto de entrega dentro da rota.</dd>
+          <dt>Fitness</dt><dd>Medida de qualidade da rota.</dd>
+          <dt>Seleção</dt><dd>Escolha das melhores rotas para reprodução.</dd>
+          <dt>Cruzamento</dt><dd>Combinação de duas rotas para gerar novas.</dd>
+          <dt>Mutação</dt><dd>Pequena alteração aleatória na rota.</dd>
+          <dt>Elitismo</dt><dd>Preservação da melhor rota encontrada.</dd>
+        </dl>
+      </section>
+
+    </aside>
+
+  </main>
+
+  <footer class="site-footer">
+    <p>Algoritmo Genético · Otimização de Rotas de Entrega · Projeto Didático</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
