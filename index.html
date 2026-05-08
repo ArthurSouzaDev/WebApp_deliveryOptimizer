@@ -69,6 +69,16 @@
           <span class="hint">0.001 – 0.5</span>
         </div>
 
+        <div class="form-group">
+          <label for="inputVelocidade">Velocidade de execução</label>
+          <div class="slider-row">
+            <span class="slider-label">Lento</span>
+            <input type="range" id="inputVelocidade" min="1" max="5" value="2" step="1" />
+            <span class="slider-label">Rápido</span>
+          </div>
+          <span class="hint" id="hintVelocidade">~1 geração por segundo</span>
+        </div>
+
         <div class="btn-group">
           <button class="btn btn-secondary" id="btnGerar">🗺 Gerar Pontos</button>
           <button class="btn btn-primary"   id="btnIniciar">▶ Iniciar</button>
