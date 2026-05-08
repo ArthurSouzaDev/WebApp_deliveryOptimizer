@@ -39,7 +39,24 @@ let executando       = false;
 let intervalId       = null;
 let historicoMelhor  = [];       // [ distância ] por geração
 
-// Canvas principal
+// Mapa de velocidades: nível 1-5 → { intervalo(ms), gerPorTick }
+// intervalo: tempo entre ticks do setInterval
+// gerPorTick: quantas gerações calcular por tick (sem redesenhar as intermediárias)
+const VELOCIDADES = {
+  1: { intervalo: 900,  gerPorTick: 1  },  // ~1 geração/s  — muito lento
+  2: { intervalo: 300,  gerPorTick: 1  },  // ~3 gerações/s — lento
+  3: { intervalo: 120,  gerPorTick: 1  },  // ~8 gerações/s — médio
+  4: { intervalo: 50,   gerPorTick: 3  },  // ~60/s         — rápido
+  5: { intervalo: 16,   gerPorTick: 8  },  // ~500/s        — muito rápido
+};
+let nivelVelocidade = 2; // padrão: lento
+
+// Controle de animação da rota (desenho segmento a segmento)
+let animacaoId   = null;  // requestAnimationFrame handle
+let rotaAnimando = null;  // rota sendo animada
+let segmentoAtual = 0;    // índice do segmento em animação
+
+
 const canvas = document.getElementById('canvas');
 const ctx    = canvas.getContext('2d');
 
@@ -90,11 +107,12 @@ function gerarPontos() {
 }
 
 /**
- * desenharCanvas()
- * Limpa o canvas e redesenha tudo: rota inicial (tracejada),
- * melhor rota (verde), pontos numerados.
+ * desenharCanvas(segmentosVisiveis)
+ * Limpa o canvas e redesenha tudo.
+ * segmentosVisiveis: se definido, desenha apenas os primeiros N
+ * segmentos da melhor rota (usado na animação progressiva).
  */
-function desenharCanvas() {
+function desenharCanvas(segmentosVisiveis) {
   const w = canvas.width;
   const h = canvas.height;
 
@@ -116,12 +134,13 @@ function desenharCanvas() {
 
   // Rota inicial (tracejada, azul escuro)
   if (rotaInicial) {
-    desenharRota(rotaInicial, 'rgba(60,100,180,.55)', 1.5, [8, 6]);
+    desenharRota(rotaInicial, 'rgba(60,100,180,.55)', 1.5, [8, 6], null);
   }
 
-  // Melhor rota (verde sólido)
+  // Melhor rota (verde) — parcial se em animação
   if (melhorRota) {
-    desenharRota(melhorRota, '#4cde8c', 2.2, null);
+    const limite = (segmentosVisiveis !== undefined) ? segmentosVisiveis : null;
+    desenharRota(melhorRota, '#4cde8c', 2.2, null, limite);
   }
 
   // Pontos de entrega
@@ -129,12 +148,19 @@ function desenharCanvas() {
 }
 
 /**
- * desenharRota(rota, cor, espessura, tracejado)
- * Desenha linhas conectando os pontos na ordem da rota,
- * incluindo o retorno ao ponto inicial.
+ * desenharRota(rota, cor, espessura, tracejado, limiteSegmentos)
+ * Desenha linhas conectando os pontos na ordem da rota.
+ * limiteSegmentos: se definido, desenha apenas os primeiros N segmentos
+ * (útil para animação progressiva). null = desenha tudo.
  */
-function desenharRota(rota, cor, espessura, tracejado) {
+function desenharRota(rota, cor, espessura, tracejado, limiteSegmentos) {
   if (!rota || rota.length < 2) return;
+
+  // Total de segmentos = pontos + fechamento do ciclo
+  const totalSegmentos = rota.length; // N pontos = N segmentos (último fecha p/ início)
+  const limite = (limiteSegmentos !== null && limiteSegmentos !== undefined)
+    ? Math.min(limiteSegmentos, totalSegmentos)
+    : totalSegmentos;
 
   ctx.beginPath();
   ctx.strokeStyle = cor;
@@ -148,19 +174,16 @@ function desenharRota(rota, cor, espessura, tracejado) {
     ctx.setLineDash([]);
   }
 
-  // Move para o primeiro ponto
   ctx.moveTo(pontos[rota[0]].x, pontos[rota[0]].y);
 
-  // Desenha até cada ponto na sequência
-  for (let i = 1; i < rota.length; i++) {
-    ctx.lineTo(pontos[rota[i]].x, pontos[rota[i]].y);
+  for (let i = 1; i <= limite; i++) {
+    // No último segmento (i === rota.length), fecha o ciclo para o depósito
+    const destIdx = (i < rota.length) ? rota[i] : rota[0];
+    ctx.lineTo(pontos[destIdx].x, pontos[destIdx].y);
   }
 
-  // Fecha o ciclo — retorno ao depósito
-  ctx.lineTo(pontos[rota[0]].x, pontos[rota[0]].y);
-
   ctx.stroke();
-  ctx.setLineDash([]); // reset
+  ctx.setLineDash([]);
 }
 
 /**
@@ -364,61 +387,140 @@ function mutarRota(rota) {
 }
 
 /**
+ * animarMelhorRota(rota)
+ * Desenha a nova melhor rota segmento a segmento usando
+ * requestAnimationFrame, criando um efeito visual de "traçado".
+ * A velocidade da animação é proporcional ao nível selecionado:
+ * em níveis lentos (1-2), cada segmento aparece com pausa;
+ * em níveis rápidos (4-5), a animação é instantânea.
+ */
+function animarMelhorRota(rota) {
+  // Cancela animação anterior se existir
+  if (animacaoId) {
+    cancelAnimationFrame(animacaoId);
+    animacaoId = null;
+  }
+
+  // Em velocidades altas, não anima — desenha direto
+  if (nivelVelocidade >= 4) {
+    desenharCanvas();
+    return;
+  }
+
+  rotaAnimando  = rota;
+  segmentoAtual = 0;
+
+  // Tempo por segmento: distribui 1.2s (nível 1) ou 0.5s (nível 3) entre todos os segmentos
+  const temposTotal = nivelVelocidade === 1 ? 1800
+                    : nivelVelocidade === 2 ? 900
+                    : 400; // nível 3
+  const totalSegs   = rota.length; // inclui fechamento do ciclo
+  const msPorSeg    = temposTotal / totalSegs;
+
+  let ultimoTimestamp = null;
+  let acumulado = 0;
+
+  function frame(timestamp) {
+    if (!ultimoTimestamp) ultimoTimestamp = timestamp;
+    acumulado += timestamp - ultimoTimestamp;
+    ultimoTimestamp = timestamp;
+
+    // Quantos segmentos novos devem aparecer neste frame
+    const novosSegs = Math.floor(acumulado / msPorSeg);
+    if (novosSegs > 0) {
+      segmentoAtual = Math.min(segmentoAtual + novosSegs, totalSegs);
+      acumulado -= novosSegs * msPorSeg;
+
+      // Redesenha com os segmentos visíveis até agora
+      desenharCanvas(segmentoAtual);
+    }
+
+    if (segmentoAtual < totalSegs) {
+      animacaoId = requestAnimationFrame(frame);
+    } else {
+      // Animação concluída — garante desenho final completo
+      animacaoId = null;
+      desenharCanvas();
+    }
+  }
+
+  animacaoId = requestAnimationFrame(frame);
+}
+
+
+/**
  * executarGeracao()
  * Executa um ciclo completo do algoritmo genético:
  * 1. Calcula fitness de todos os indivíduos.
  * 2. Identifica o melhor (elitismo).
  * 3. Gera nova população por seleção + cruzamento + mutação.
  * 4. Injeta o elite na nova população.
+ *
+ * Respeita `gerPorTick`: em velocidades altas, processa múltiplas
+ * gerações por tick sem redesenhar as intermediárias.
  */
 function executarGeracao() {
-  geracaoAtual++;
+  const { gerPorTick } = VELOCIDADES[nivelVelocidade];
 
-  // ── Passo 1: Calcula distâncias ──────────────────
-  const distancias = populacao.map(calcularDistanciaRota);
-  ativarEtapa('etapa-fitness');
+  for (let t = 0; t < gerPorTick; t++) {
+    if (!executando || geracaoAtual >= maxGeracoes) break;
+    geracaoAtual++;
 
-  // ── Passo 2: Elitismo — encontra o melhor ────────
-  let idxElite = 0;
-  for (let i = 1; i < distancias.length; i++) {
-    if (distancias[i] < distancias[idxElite]) idxElite = i;
+    // ── Passo 1: Calcula distâncias ──────────────────
+    const distancias = populacao.map(calcularDistanciaRota);
+    ativarEtapa('etapa-fitness');
+
+    // ── Passo 2: Elitismo — encontra o melhor ────────
+    let idxElite = 0;
+    for (let i = 1; i < distancias.length; i++) {
+      if (distancias[i] < distancias[idxElite]) idxElite = i;
+    }
+    const elite     = [...populacao[idxElite]];
+    const distElite = distancias[idxElite];
+
+    // Atualiza o melhor global e dispara animação
+    let novaRota = false;
+    if (distElite < melhorDistancia) {
+      melhorDistancia = distElite;
+      melhorRota      = [...elite];
+      novaRota        = true;
+      adicionarLog(`🏆 Nova melhor rota! Distância: ${melhorDistancia.toFixed(1)}`, 'success');
+      ativarEtapa('etapa-elitismo');
+    }
+
+    // Guarda histórico para o gráfico
+    historicoMelhor.push(melhorDistancia);
+
+    // ── Passo 3: Seleção ─────────────────────────────
+    ativarEtapa('etapa-selecao');
+
+    // ── Passo 4: Nova população ───────────────────────
+    const novaPopulacao = [elite];
+    while (novaPopulacao.length < tamPopulacao) {
+      const pai1  = selecionarPai(distancias);
+      const pai2  = selecionarPai(distancias);
+      let   filho = cruzarRotas(pai1, pai2);
+      filho       = mutarRota(filho);
+      novaPopulacao.push(filho);
+    }
+    ativarEtapa('etapa-cruzamento');
+    ativarEtapa('etapa-mutacao');
+
+    populacao = novaPopulacao;
+
+    // Anima visualmente se encontrou rota melhor (apenas no último tick)
+    if (novaRota && t === gerPorTick - 1) {
+      animarMelhorRota(melhorRota);
+    }
   }
-  const elite       = [...populacao[idxElite]];
-  const distElite   = distancias[idxElite];
 
-  // Atualiza o melhor global
-  if (distElite < melhorDistancia) {
-    melhorDistancia = distElite;
-    melhorRota      = [...elite];
-    adicionarLog(`🏆 Nova melhor rota! Distância: ${melhorDistancia.toFixed(1)}`, 'success');
-    ativarEtapa('etapa-elitismo');
-  }
-
-  // Guarda histórico para o gráfico
-  historicoMelhor.push(melhorDistancia);
-
-  // ── Passo 3: Seleção ─────────────────────────────
-  ativarEtapa('etapa-selecao');
-
-  // ── Passo 4: Nova população ───────────────────────
-  const novaPopulacao = [elite]; // elitismo: garante o melhor
-
-  while (novaPopulacao.length < tamPopulacao) {
-    const pai1   = selecionarPai(distancias);
-    const pai2   = selecionarPai(distancias);
-    let   filho  = cruzarRotas(pai1, pai2);
-    filho        = mutarRota(filho);
-    novaPopulacao.push(filho);
-  }
-
-  ativarEtapa('etapa-cruzamento');
-  ativarEtapa('etapa-mutacao');
-
-  populacao = novaPopulacao;
-
-  // ── Atualiza interface ────────────────────────────
+  // ── Atualiza interface (uma vez por tick) ─────────
   atualizarEstatisticas();
-  desenharCanvas();
+
+  // Só redesenha canvas se não há animação de rota em andamento
+  if (!animacaoId) {
+    desenharCanvas();
+  }
   desenharGrafico();
 
   // ── Verifica fim ──────────────────────────────────
@@ -480,10 +582,14 @@ function iniciarAlgoritmo() {
 
   executando = true;
 
-  // Inicia o loop: uma geração a cada ~30ms (suave e visível)
+  // Lê nível de velocidade e calcula intervalo
+  nivelVelocidade = parseInt(document.getElementById('inputVelocidade').value);
+  const { intervalo } = VELOCIDADES[nivelVelocidade];
+
+  // Inicia o loop com o intervalo correspondente à velocidade escolhida
   intervalId = setInterval(() => {
     if (executando) executarGeracao();
-  }, 30);
+  }, intervalo);
 
   adicionarLog('▶ Algoritmo iniciado.', 'info');
 }
@@ -529,9 +635,12 @@ function retomarAlgoritmo() {
   document.getElementById('btnIniciar').onclick   = iniciarAlgoritmo;
   document.getElementById('btnIniciar').textContent = '▶ Iniciar';
 
+  nivelVelocidade = parseInt(document.getElementById('inputVelocidade').value);
+  const { intervalo } = VELOCIDADES[nivelVelocidade];
+
   intervalId = setInterval(() => {
     if (executando) executarGeracao();
-  }, 30);
+  }, intervalo);
 
   adicionarLog('▶ Simulação retomada.', 'info');
 }
@@ -766,6 +875,27 @@ document.getElementById('btnGerar').addEventListener('click',    gerarPontos);
 document.getElementById('btnIniciar').addEventListener('click',  iniciarAlgoritmo);
 document.getElementById('btnPausar').addEventListener('click',   pausarAlgoritmo);
 document.getElementById('btnReiniciar').addEventListener('click', () => reiniciarSimulacao(true));
+
+// Slider de velocidade — atualiza hint e, se rodando, reinicia o intervalo
+const sliderVel   = document.getElementById('inputVelocidade');
+const hintVel     = document.getElementById('hintVelocidade');
+const labelVel    = ['Muito lento (~1 geração/s)', 'Lento (~3 gerações/s)',
+                     'Médio (~8 gerações/s)', 'Rápido (~60 gerações/s)', 'Muito rápido (~500 gerações/s)'];
+
+sliderVel.addEventListener('input', () => {
+  const nivel = parseInt(sliderVel.value);
+  hintVel.textContent = labelVel[nivel - 1];
+
+  // Se o algoritmo estiver rodando, reinicia o intervalo com a nova velocidade
+  if (executando && intervalId) {
+    clearInterval(intervalId);
+    nivelVelocidade = nivel;
+    const { intervalo } = VELOCIDADES[nivel];
+    intervalId = setInterval(() => {
+      if (executando) executarGeracao();
+    }, intervalo);
+  }
+});
 
 /* ─────────────────────────────────────────────────────────────
    7. INICIALIZAÇÃO
